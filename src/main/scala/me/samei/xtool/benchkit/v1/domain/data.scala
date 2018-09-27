@@ -4,6 +4,13 @@ import scala.concurrent.Future
 
 object data {
 
+    sealed trait ApplyLoad
+    object ApplyLoad {
+        case object Continue extends ApplyLoad
+        case object Wait extends ApplyLoad
+        case object End extends ApplyLoad
+    }
+
     type Millis = Long
 
     type Count = Int
@@ -40,7 +47,8 @@ object data {
 
     type Async[T] = Future[Result[T]]
 
-    case class Cancel(desc: String)
+    case class Stop(desc: String) // Don't generate more senarios
+    case class Cancel(desc: String) // Ignore remained responses
 
 }
 

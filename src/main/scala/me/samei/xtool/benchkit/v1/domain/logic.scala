@@ -4,9 +4,11 @@ import java.util.concurrent.{ ForkJoinPool, ForkJoinWorkerThread }
 import java.util.concurrent.ForkJoinPool.ForkJoinWorkerThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 
-import akka.actor.ActorRef
+import akka.actor.{ Actor, ActorRef }
 import me.samei.xtool.benchkit.v1.domain.data.{ Count, Millis, Snapshot }
+import org.slf4j.LoggerFactory
 
+import scala.annotation.tailrec
 import scala.concurrent.{ ExecutionContext, ExecutionContextExecutor, Future }
 import scala.util.{ Failure, Success }
 
@@ -46,26 +48,31 @@ object logic {
 
         def startedAt: data.Millis
         def now: data.Millis
+
+        def concurrencyLimit: data.Count
+
         def running: data.Count
         def done: data.Count
         def fail: data.Count
 
-        def plusRunning: data.Count
-        def plusDone: data.Count
-        def plusFail: data.Count
+        def incRunning: data.Count
+        def incDone: data.Count
+        def incFail: data.Count
 
         def detail: data.Detail
         def snapshot: data.Snapshot
-        def continue(context: Context): Boolean
+
+        def continue(context: Context): data.ApplyLoad
     }
 
     object Controller {
 
         trait BaseV1 extends Controller {
 
-            private val _running = new AtomicInteger(0);
-            private val _done    = new AtomicInteger(0);
-            private val _fail    = new AtomicInteger(0);
+            private val _init = new AtomicInteger(0)
+            private val _running = new AtomicInteger(0)
+            private val _done = new AtomicInteger(0)
+            private val _fail = new AtomicInteger(0)
 
             override val startedAt : data.Millis = now
 
@@ -77,14 +84,14 @@ object logic {
 
             override def fail : Count = _fail.get
 
-            override def plusRunning : Count = _running.incrementAndGet
+            override def incRunning : Count = _running.incrementAndGet
 
-            override def plusDone : Count = {
+            override def incDone : Count = {
                 _running.decrementAndGet
                 _done.incrementAndGet
             }
 
-            override def plusFail : Count = {
+            override def incFail : Count = {
                 _running.decrementAndGet
                 _fail.incrementAndGet
             }
@@ -95,65 +102,104 @@ object logic {
         }
 
         case class TillTimeV1 (
-            val till : data.Millis
+            val duration: data.Millis,
+            override val concurrencyLimit : data.Count
         ) extends BaseV1 {
 
-            require(till > startedAt)
+            require(duration > 0)
 
-            override def continue (context : Context) : Boolean = now < till
-        }
+            val till = startedAt + duration
+
+            override def continue (context : Context) = {
+                running match {
+                    case rs if now >= till => data.ApplyLoad.End
+                    case rs if rs >= concurrencyLimit => data.ApplyLoad.Wait
+                    case rs => data.ApplyLoad.Continue
+                }
+            }
 
         case class TillCountV1(
-            till: data.Count
+            till: data.Count,
+            override val concurrencyLimit : data.Count
         ) extends BaseV1 {
 
             require(till > 0)
 
-            override def continue(context: Context): Boolean = running + done + fail < till
+            override def continue(context: Context) = {
+                running match {
+                    case rs if rs + done + fail >= till => data.ApplyLoad.End
+                    case rs if rs >= concurrencyLimit => data.ApplyLoad.Wait
+                    case rs => data.ApplyLoad.Continue
+                }
+            }
+        }
+
+
         }
 
     }
 
-    trait Worker[S, R] {
-        def context: Context
-        def state: S
-        def scenario: Scenario[S, R]
-        def controller: Controller
-        def reporter: ActorRef
+    trait Worker[S, R] extends Actor {
 
-        def run = {
+        protected def benchmark: Context
+        protected def state: S
+        protected def scenario: Scenario[S, R]
+        protected def controller: Controller
+        protected def reporter: ActorRef
+
+        protected  def loggerName: String
+        protected val logger = LoggerFactory.getLogger(s"$loggerName")
+
+        def runOne = {
+            if (logger.isDebugEnabled()) logger.debug("RunOne, ...")
             val beforeStart = controller.snapshot
             Future{
-                scenario.apply(context, state)
-            }(context.workEC)
-                .flatMap{ rsl => rsl }(context.systemEC)
+                if (logger.isDebugEnabled()) logger.debug("RunOne, Apply")
+                scenario.apply(benchmark, state)
+            }(benchmark.workEC)
+                .flatMap{ rsl => rsl }(benchmark.systemEC)
                 .onComplete {
                     case Success(result @ data.Done(value)) =>
+                        if (logger.isDebugEnabled()) logger.debug("RunOne, Done")
                         val atEnd = controller.snapshot
                         val report = data.Report(
                             scenario.desc, beforeStart, atEnd, result
                         )
                         reporter ! report
                     case Success(result @ data.Fail(error, cause)) =>
+                        if (logger.isDebugEnabled()) logger.debug("RunOne, Error")
                         val atEnd = controller.snapshot
                         val report = data.Report(
                             scenario.desc, beforeStart, atEnd, result
                         )
                         reporter ! report
                     case Failure(cause) =>
+                        if (logger.isDebugEnabled()) logger.debug("RunOne, Fail", cause)
                         val atEnd = controller.snapshot
                         val report = data.Report(
                             scenario.desc, beforeStart, atEnd,
                             data.Fail("Scenario Failure", Some(cause))
                         )
                         reporter ! report
-                }
+                }(benchmark.workEC)
         }
 
-        def recieve = {
-            case _:data.Report =>
-                if (controller.continue(context)) run
-            case _:data.Cancel =>
+        @tailrec final def runTill : Boolean = {
+            controller.continue(benchmark) match {
+                case data.ApplyLoad.Continue => runTill
+                case data.ApplyLoad.Wait => false
+                case data.ApplyLoad.End => true
+            }
+        }
+
+        override def preStart(): Unit = { runTill }
+
+        override def postStop(): Unit = {
+            logger.debug("postStop")
+        }
+
+        override def receive = {
+            case _:data.Report => if (runTill) context stop self
 
         }
     }
