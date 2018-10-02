@@ -13,21 +13,21 @@ object MainTest {
     type Result = Unit
 
     class Worker(
-        val waitFor: data.Millis = (10 seconds).toMillis,
+        val waitFor: data.Millis = 200,
         val id: data.Identity = data.Identity("localhost","zero"),
         override val loggerName : String = "worker"
     ) extends logic.Worker[State, Result] {
 
-        override protected def benchmark : logic.Context =
+        override protected val benchmark : logic.Context =
             new logic.Context.ImplV1(id)
 
-        override protected def state : State = ()
+        override protected val state : State = ()
 
-        override protected def scenario : logic.Scenario[State, Result] =
+        override protected val scenario : logic.Scenario[State, Result] =
             new logic.Scenario[State, Result] {
 
                 override def desc : data.Description =
-                    data.Description("simple-thread-sleep", Nil)
+                    data.Description("simple", Nil)
 
                 override def apply (
                     context : logic.Context,
@@ -39,9 +39,9 @@ object MainTest {
             }
 
 
-        override protected def controller : logic.Controller =
+        override protected val controller : logic.Controller =
             new logic.Controller.TillTimeV1(
-                (1 minutes).toMillis, 3
+                (10 seconds).toMillis, 1000
             )
     }
 
@@ -49,7 +49,7 @@ object MainTest {
 
     class Super extends Actor {
 
-        private val logger = LoggerFactory.getLogger(getClass)
+        private val logger = LoggerFactory.getLogger("super")
 
         override def supervisorStrategy = OneForOneStrategy() {
             case NonFatal(cause) =>
@@ -58,16 +58,19 @@ object MainTest {
         }
 
         override def preStart() = {
-            println(s"Start, ${self}")
-            context.actorOf(worker,"main")
+            logger.info(s"Start, ${self}")
+            val ref = context actorOf (worker,"main")
+            context watch ref
         }
 
         override def receive : Receive = {
-            case Terminated(ref) => context stop self
+            case Terminated(ref) =>
+                logger.info(s"STOPPED: ${ref}")
+                context stop self
         }
 
         override def postStop() = {
-            println(s"Stop, ${self}")
+            logger.info(s"Stop, ${self}")
             context.system.terminate()
         }
 
@@ -83,7 +86,4 @@ object MainTest {
 
         Await.result(actorySystem.whenTerminated, Duration.Inf)
     }
-
-
-
 }

@@ -41,9 +41,9 @@ object data {
         result: Result[_]
     )
 
-    sealed trait Result[T]
-    case class Done[T](value: T) extends Result[T]
-    case class Fail[T](error: String, cause: Option[Throwable] = None) extends Result[T]
+    sealed trait Result[T] { def isSuccessful: Boolean }
+    case class Done[T](value: T) extends Result[T] { override val isSuccessful = true }
+    case class Fail[T](error: String, cause: Option[Throwable] = None) extends Result[T] { override val isSuccessful = false }
 
     type Async[T] = Future[Result[T]]
 
