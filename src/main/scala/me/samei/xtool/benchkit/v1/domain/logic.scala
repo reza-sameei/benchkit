@@ -117,6 +117,7 @@ object logic {
                     case rs => data.ApplyLoad.Continue
                 }
             }
+        }
 
         case class TillCountV1(
             till: data.Count,
@@ -132,9 +133,6 @@ object logic {
                     case rs => data.ApplyLoad.Continue
                 }
             }
-        }
-
-
         }
 
     }
