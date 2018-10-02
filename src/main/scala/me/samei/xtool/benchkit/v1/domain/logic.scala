@@ -145,7 +145,7 @@ object logic {
         protected def state: S
         protected def scenario: Scenario[S, R]
         protected def controller: Controller
-        protected def reporter: ActorRef
+        protected def reporter: ActorRef = self
 
         protected  def loggerName: String
         protected val logger = LoggerFactory.getLogger(s"$loggerName")
@@ -185,22 +185,28 @@ object logic {
         }
 
         @tailrec final def runTill : Boolean = {
-            controller.continue(benchmark) match {
-                case data.ApplyLoad.Continue => runTill
+            val rsl = controller.continue(benchmark)
+            logger.debug(s"RunTill, => ${rsl}, ${self}")
+            rsl match {
+                case data.ApplyLoad.Continue =>
+                    runOne
+                    runTill
                 case data.ApplyLoad.Wait => false
                 case data.ApplyLoad.End => true
             }
         }
 
-        override def preStart(): Unit = { runTill }
+        override def preStart(): Unit = {
+            logger.debug(s"Start, RunTill, ${self}")
+            runTill
+        }
 
         override def postStop(): Unit = {
-            logger.debug("postStop")
+            logger.debug(s"Stop, ${self}")
         }
 
         override def receive = {
             case _:data.Report => if (runTill) context stop self
-
         }
     }
 

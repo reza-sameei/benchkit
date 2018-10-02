@@ -1,6 +1,7 @@
 package me.samei.xtool.benchkit.v1.domain
 import akka.actor.{ Actor, ActorRef, ActorSystem, OneForOneStrategy, Props, SupervisorStrategy, Terminated }
 import me.samei.xtool.benchkit.v1.domain.data.Async
+import org.slf4j.LoggerFactory
 
 import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
@@ -42,13 +43,13 @@ object MainTest {
             new logic.Controller.TillTimeV1(
                 (1 minutes).toMillis, 3
             )
-
-        override protected def reporter : ActorRef = ???
     }
 
     def worker = Props { new Worker() }
 
     class Super extends Actor {
+
+        private val logger = LoggerFactory.getLogger(getClass)
 
         override def supervisorStrategy = OneForOneStrategy() {
             case NonFatal(cause) =>
@@ -57,6 +58,7 @@ object MainTest {
         }
 
         override def preStart() = {
+            println(s"Start, ${self}")
             context.actorOf(worker,"main")
         }
 
@@ -64,7 +66,10 @@ object MainTest {
             case Terminated(ref) => context stop self
         }
 
-        override def postStop() = context.system.terminate()
+        override def postStop() = {
+            println(s"Stop, ${self}")
+            context.system.terminate()
+        }
 
     }
 
